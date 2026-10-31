@@ -17,60 +17,37 @@ st.set_page_config(
 
 BASE_DIR = Path(__file__).resolve().parent
 
-SEASON_LABELS = {
-    1: "Musim semi",
-    2: "Musim panas",
-    3: "Musim gugur",
-    4: "Musim dingin"
-}
-
-WEATHER_LABELS = {
-    1: "Cerah / sedikit awan",
-    2: "Berkabut / berawan",
-    3: "Hujan ringan / cuaca buruk",
-    4: "Cuaca ekstrem"
-}
-
+SEASON_ORDER = ["Musim Dingin", "Musim Semi", "Musim Panas", "Musim Gugur"]
+WEATHER_ORDER = [
+    "Cerah/Sedikit Awan",
+    "Berkabut/Berawan",
+    "Hujan Ringan/Cuaca Buruk"
+]
+DAY_TYPE_ORDER = ["Hari Nonkerja", "Hari Kerja"]
 
 # ==========================================
-# 2. MEMUAT DATASET
+# 2. MEMUAT DATASET (data hasil cleaning dari notebook)
 # ==========================================
 @st.cache_data
 def load_data():
-    day = pd.read_csv(BASE_DIR / "day.csv")
-    hour = pd.read_csv(BASE_DIR / "hour.csv")
+    day = pd.read_csv(BASE_DIR / "day_clean.csv", parse_dates=["dteday"])
+    hour = pd.read_csv(BASE_DIR / "hour_clean.csv", parse_dates=["dteday"])
 
-    day["dteday"] = pd.to_datetime(day["dteday"])
-    hour["dteday"] = pd.to_datetime(hour["dteday"])
-
-    day["Tahun"] = day["yr"].map({0: 2011, 1: 2012})
-    hour["Tahun"] = hour["yr"].map({0: 2011, 1: 2012})
-
-    day["Musim"] = day["season"].map(SEASON_LABELS)
-    hour["Musim"] = hour["season"].map(SEASON_LABELS)
-
-    day["Kondisi Cuaca"] = day["weathersit"].map(WEATHER_LABELS)
-    hour["Kondisi Cuaca"] = hour["weathersit"].map(WEATHER_LABELS)
-
-    day["Jenis Hari"] = day["workingday"].map({
-        0: "Hari Nonkerja",
-        1: "Hari Kerja"
-    })
-
-    hour["Jenis Hari"] = hour["workingday"].map({
-        0: "Hari Nonkerja",
-        1: "Hari Kerja"
-    })
+    for df in (day, hour):
+        df["Tahun"] = df["yr"]
+        df["Musim"] = df["season"]
+        df["Kondisi Cuaca"] = df["weathersit"]
+        df["Jenis Hari"] = df["workingday"]
 
     return day, hour
 
 
 try:
     day_df, hour_df = load_data()
-except FileNotFoundError as error:
+except FileNotFoundError:
     st.error(
-        "File dataset tidak ditemukan. Pastikan day.csv dan hour.csv "
-        "berada di folder yang sama dengan dashboard.py."
+        "File dataset tidak ditemukan. Pastikan day_clean.csv dan "
+        "hour_clean.csv berada di folder yang sama dengan dashboard.py."
     )
     st.stop()
 
@@ -83,7 +60,7 @@ st.markdown(
     """
     Dashboard interaktif untuk mengeksplorasi penyewaan sepeda
     berdasarkan waktu, jenis hari, musim, kondisi cuaca,
-    dan jenis pengguna selama 2011–2012.
+    dan jenis pengguna selama 2011-2012.
     """
 )
 
@@ -102,28 +79,22 @@ selected_years = st.sidebar.multiselect(
     default=available_years
 )
 
-available_seasons = list(SEASON_LABELS.values())
 selected_seasons = st.sidebar.multiselect(
     "Pilih musim",
-    options=available_seasons,
-    default=available_seasons
+    options=SEASON_ORDER,
+    default=SEASON_ORDER
 )
 
-available_weather = sorted(
-    day_df["Kondisi Cuaca"].dropna().unique().tolist()
-)
 selected_weather = st.sidebar.multiselect(
     "Pilih kondisi cuaca",
-    options=available_weather,
-    default=available_weather
+    options=WEATHER_ORDER,
+    default=WEATHER_ORDER
 )
 
 if not selected_years or not selected_seasons or not selected_weather:
     st.warning("Pilih minimal satu tahun, musim, dan kondisi cuaca.")
     st.stop()
 
-
-# Terapkan filter ke data harian dan per jam
 day_filtered = day_df[
     day_df["Tahun"].isin(selected_years)
     & day_df["Musim"].isin(selected_seasons)
@@ -173,7 +144,7 @@ st.divider()
 st.subheader("1. Pola Penyewaan Berdasarkan Jam")
 
 hourly_summary = (
-    hour_filtered.groupby(["hr", "Jenis Hari"])["cnt"]
+    hour_filtered.groupby(["hr", "Jenis Hari"], observed=True)["cnt"]
     .mean()
     .reset_index()
 )
@@ -185,6 +156,7 @@ sns.lineplot(
     x="hr",
     y="cnt",
     hue="Jenis Hari",
+    hue_order=DAY_TYPE_ORDER,
     marker="o",
     ax=ax1
 )
@@ -199,6 +171,11 @@ fig1.tight_layout()
 st.pyplot(fig1)
 plt.close(fig1)
 
+st.caption(
+    "Catatan: 165 jam yang tidak tercatat pada data asli telah dilengkapi "
+    "melalui imputasi."
+)
+
 
 # ==========================================
 # 7. PENYEWAAN BERDASARKAN MUSIM DAN CUACA
@@ -208,9 +185,9 @@ st.subheader("2. Penyewaan Berdasarkan Musim dan Cuaca")
 col1, col2 = st.columns(2)
 
 season_summary = (
-    day_filtered.groupby("Musim", observed=False)["cnt"]
+    day_filtered.groupby("Musim", observed=True)["cnt"]
     .mean()
-    .reindex(available_seasons)
+    .reindex(SEASON_ORDER)
     .dropna()
 )
 
@@ -226,9 +203,10 @@ with col1:
     plt.close(fig2)
 
 weather_summary = (
-    day_filtered.groupby("Kondisi Cuaca")["cnt"]
+    day_filtered.groupby("Kondisi Cuaca", observed=True)["cnt"]
     .mean()
-    .sort_values(ascending=False)
+    .reindex(WEATHER_ORDER)
+    .dropna()
 )
 
 with col2:
@@ -249,9 +227,10 @@ with col2:
 st.subheader("3. Pengguna Kasual vs Terdaftar")
 
 user_summary = (
-    hour_filtered.groupby("Jenis Hari")[["casual", "registered"]]
+    hour_filtered.groupby("Jenis Hari", observed=True)[["casual", "registered"]]
     .mean()
-    .reindex(["Hari Nonkerja", "Hari Kerja"])
+    .reindex(DAY_TYPE_ORDER)
+    .dropna(how="all")
 )
 
 user_plot = user_summary.reset_index().melt(
@@ -267,6 +246,7 @@ sns.barplot(
     x="Jenis Hari",
     y="Rata-rata Penyewaan per Jam",
     hue="Jenis Pengguna",
+    errorbar=None,
     ax=ax4
 )
 
@@ -298,4 +278,4 @@ with st.expander("Lihat ringkasan data yang difilter"):
         use_container_width=True
     )
 
-st.caption("Bike Sharing Data Analysis | Dataset periode 2011–2012")
+st.caption("Bike Sharing Data Analysis | Dataset periode 2011-2012")
